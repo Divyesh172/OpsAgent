@@ -1,16 +1,18 @@
-# --- Secrets & API Keys (CRITICAL: NEVER UPLOAD THESE) ---
+# --- Secrets & API Keys (NEVER UPLOAD THESE) ---
 .env
-token.json
 client_secret.json
+token.json
 credentials.json
+service_account.json
 
 # --- Database (Local User Data) ---
-opsagent.db
+# Exclude the SQLite DB so you don't leak customer data or passwords
 *.db
 *.sqlite
 *.sqlite3
+opsagent.db
 
-# --- Python Environment ---
+# --- Python Environment & Cache ---
 __pycache__/
 *.py[cod]
 *$py.class
@@ -20,17 +22,17 @@ ENV/
 env/
 build/
 dist/
+*.egg-info/
 
-# --- IDE Specific ---
+# --- IDE Settings ---
 .idea/
 .vscode/
 *.swp
-*.bak
 
 # --- OS Specific ---
 .DS_Store
 Thumbs.db
 
-# --- Streamlit & Logs ---
-.streamlit/secrets.toml
+# --- Logs ---
 *.log
+npm-debug.log*
