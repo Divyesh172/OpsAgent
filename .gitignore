@@ -1,8 +1,14 @@
-# --- Secrets & API Keys (DO NOT REMOVE) ---
+# --- Secrets & API Keys (CRITICAL: NEVER UPLOAD THESE) ---
 .env
 token.json
 client_secret.json
 credentials.json
+
+# --- Database (Local User Data) ---
+opsagent.db
+*.db
+*.sqlite
+*.sqlite3
 
 # --- Python Environment ---
 __pycache__/
@@ -15,7 +21,7 @@ env/
 build/
 dist/
 
-# --- IDE Specific (PyCharm/VSCode) ---
+# --- IDE Specific ---
 .idea/
 .vscode/
 *.swp
@@ -25,6 +31,6 @@ dist/
 .DS_Store
 Thumbs.db
 
-# --- Streamlit & Local Data ---
-.streamlit/config.toml
+# --- Streamlit & Logs ---
+.streamlit/secrets.toml
 *.log

@@ -1,42 +1,57 @@
 import time
 import gspread
 import os
+import logging
 import urllib.parse
 from google.oauth2.credentials import Credentials
-from google.auth.transport.requests import Request
+from google.auth.transport.requests import Request as GoogleRequest
 from twilio.rest import Client
 from dotenv import load_dotenv
+from thefuzz import process  # <--- Added for Fuzzy Matching
+
+# --- 1. CONFIGURATION & SETUP ---
+
+# Configure Logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - [MUNIM] - %(levelname)s - %(message)s',
+    datefmt='%H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
-# --- CONFIGURATION ---
+# Twilio Config
 TWILIO_SID = os.getenv("TWILIO_SID")
 TWILIO_AUTH = os.getenv("TWILIO_AUTH")
-TWILIO_FROM = "whatsapp:+14155238886"
+TWILIO_FROM = "whatsapp:+14155238886" # Sandbox Number
+TWILIO_TO = os.getenv("TWILIO_TO_NUMBER") # Target Owner Number
 
-# CRITICAL: Get target number from Env or default to hardcoded for hackathon
-# Best practice: Add TWILIO_TO_NUMBER in your .env file
-TWILIO_TO = os.getenv("TWILIO_TO_NUMBER", "whatsapp:+917021539226")
-
-# Check for missing keys to prevent startup crashes
-if not TWILIO_SID or not TWILIO_AUTH:
-    print("⚠️ WARNING: Twilio credentials missing in .env. Alerts will not be sent.")
-    client_twilio = None
+# Initialize Twilio Client safely
+client_twilio = None
+if TWILIO_SID and TWILIO_AUTH:
+    try:
+        client_twilio = Client(TWILIO_SID, TWILIO_AUTH)
+        logger.info("✅ Twilio Client Connected")
+    except Exception as e:
+        logger.error(f"❌ Twilio Init Failed: {e}")
 else:
-    client_twilio = Client(TWILIO_SID, TWILIO_AUTH)
+    logger.warning("⚠️ Twilio credentials missing. SMS alerts will be DISABLED.")
 
 SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/drive.file'
 ]
 
-def get_sheet():
+# --- 2. ROBUST AUTHENTICATION ---
+
+def get_sheet_client():
     """
-    Robust sheet retrieval. Re-reads token.json every time to ensure
-    it has the latest refresh token from main.py.
+    Connects to Google Sheets using the shared token.json.
+    Automatically refreshes expired tokens.
     """
     if not os.path.exists('token.json'):
-        print("⏳ Munim waiting for login... (token.json not found)")
+        logger.warning("⏳ Waiting for User Login... (token.json missing)")
         return None
 
     try:
@@ -44,118 +59,145 @@ def get_sheet():
 
         # Auto-refresh if expired
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            # Optional: Write back to file if you want to sync state,
-            # but main.py usually handles the writing.
+            logger.info("🔄 Refreshing expired Google Token...")
+            creds.refresh(GoogleRequest())
+            # Write back to file to keep Main.py and Dashboard in sync
+            with open('token.json', 'w') as token:
+                token.write(creds.to_json())
 
-        client = gspread.authorize(creds)
-        # Open by name. If name changes, this line needs update.
-        return client.open("OpsAgent_DB_v1")
+        return gspread.authorize(creds)
     except Exception as e:
-        print(f"⚠️ Auth Error: {e}")
+        logger.error(f"⚠️ Auth Error: {e}")
         return None
+
+# --- 3. INTELLIGENT SUPPLIER LOOKUP ---
 
 def get_supplier_info(sheet, item_name):
     """
-    Looks for the supplier of a specific item.
-    Returns: (Name, Phone) or (None, None)
+    Uses Fuzzy Matching to find the supplier.
+    Example: 'Maggi' will match 'Maggi Noodles' in the supplier list.
     """
     try:
         supp_tab = sheet.worksheet("Suppliers")
         records = supp_tab.get_all_records()
 
-        for row in records:
-            # Case insensitive check
-            if str(row.get('Item Name', '')).lower().strip() == item_name.lower().strip():
-                return row.get('Supplier Name'), str(row.get('Phone Number'))
-    except Exception as e:
-        print(f"⚠️ Supplier Lookup Error: {e}")
+        # Extract all supplier item names for matching
+        supplier_items = [str(r.get('Item Name', '')) for r in records]
+
+        # Fuzzy Match: Find best match with score > 80
+        match, score = process.extractOne(item_name, supplier_items)
+
+        if score > 80:
+            # Find the full record for the matched item
+            for row in records:
+                if row.get('Item Name') == match:
+                    logger.info(f"🔎 Fuzzy Match: '{item_name}' -> '{match}' (Score: {score})")
+                    return row.get('Supplier Name'), str(row.get('Phone Number'))
+
+        logger.info(f"🤷‍♂️ No supplier found for '{item_name}'")
         return None, None
-    return None, None
+
+    except Exception as e:
+        logger.error(f"⚠️ Supplier Lookup Error: {e}")
+        return None, None
+
+# --- 4. CORE MONITORING LOOP ---
 
 def check_inventory_risks():
-    print("🕵️‍♂️ Munim is checking inventory...")
-    sheet = get_sheet()
-    if not sheet: return
+    client = get_sheet_client()
+    if not client: return
 
     try:
+        sheet = client.open("OpsAgent_DB_v1")
         inventory_tab = sheet.worksheet("Inventory")
-        # Get all values including headers
+
+        # Fetch all data (Rows)
         rows = inventory_tab.get_all_values()
 
-        # Start from index 1 to skip header
+        # Skip Header (Row 0)
+        # Data structure expected: [Name, Qty, Cost, Date, AlertStatus]
         for i, row in enumerate(rows[1:]):
-            # Row index in sheet is i + 2 (1-based index + header skipped)
-            row_num = i + 2
+            row_num = i + 2  # Sheets are 1-indexed + header
 
-            # Safe unpacking
+            # Safety check for empty rows
             if len(row) < 2: continue
 
             item_name = row[0]
             qty_str = row[1]
+
+            # Safe Access to Alert Status (Column E / Index 4)
             alert_status = row[4] if len(row) > 4 else ""
 
             try:
                 qty = int(qty_str)
             except ValueError:
-                continue
+                continue # Skip if quantity isn't a number
 
-            # LOGIC: Low Stock Trigger
+            # --- LOGIC: LOW STOCK (< 10) ---
             if qty < 10 and alert_status != "SENT":
-                print(f"🚨 ALERT TRIGGERED: Low stock for {item_name} ({qty} left)")
+                logger.warning(f"🚨 LOW STOCK: {item_name} ({qty} left)")
 
                 if not client_twilio:
-                    print("❌ Twilio client not active. Skipping SMS.")
+                    logger.info("Skipping SMS (Twilio not configured).")
                     continue
 
-                # 1. FIND SUPPLIER
+                # 1. Find Supplier (Fuzzy)
                 supp_name, supp_phone = get_supplier_info(sheet, item_name)
 
                 msg_body = f"⚠️ *Low Stock Alert: {item_name}*\nOnly {qty} units left."
 
-                # 2. GENERATE "ONE-CLICK" REORDER LINK
+                # 2. Generate Reorder Link
                 if supp_name and supp_phone:
-                    text_to_send = f"Namaste {supp_name}, please send 50 units of {item_name} urgently."
+                    # Construct WhatsApp Click-to-Chat Link
+                    text_to_send = f"Namaste {supp_name}, please send 50 units of {item_name}."
                     encoded_text = urllib.parse.quote(text_to_send)
-                    # Ensure phone number has no spaces/dashes for link
-                    clean_phone = supp_phone.replace(" ", "").replace("-", "")
+                    clean_phone = supp_phone.replace(" ", "").replace("-", "").strip()
+
                     wa_link = f"https://wa.me/{clean_phone}?text={encoded_text}"
-
-                    msg_body += f"\n\n👇 *Click to Reorder from {supp_name}:*\n{wa_link}"
+                    msg_body += f"\n\n👇 *1-Click Reorder from {supp_name}:*\n{wa_link}"
                 else:
-                    msg_body += "\n(No supplier found in database)"
+                    msg_body += "\n(No supplier info found)"
 
-                # 3. SEND ALERT
+                # 3. Send Alert
                 try:
-                    client_twilio.messages.create(
-                        body=msg_body,
-                        from_=TWILIO_FROM,
-                        to=TWILIO_TO
-                    )
-                    # Mark as sent to prevent spamming
-                    inventory_tab.update_cell(row_num, 5, "SENT")
-                    print(f"✅ Alert sent to Owner for {item_name}")
-                except Exception as e:
-                    print(f"❌ Twilio Send Failed: {e}")
+                    if TWILIO_TO:
+                        client_twilio.messages.create(
+                            body=msg_body,
+                            from_=TWILIO_FROM,
+                            to=TWILIO_TO
+                        )
+                        # Mark as SENT to avoid spamming every minute
+                        inventory_tab.update_cell(row_num, 5, "SENT")
+                        logger.info(f"✅ Alert sent for {item_name}")
+                    else:
+                        logger.warning("⚠️ TWILIO_TO_NUMBER not set in .env")
 
-            # RESET LOGIC: If stock goes back up, clear the "SENT" flag
+                except Exception as e:
+                    logger.error(f"❌ Twilio Send Failed: {e}")
+
+            # --- LOGIC: RESET ALERT ---
+            # If stock is replenished (>= 10), clear the "SENT" flag so it can alert again later.
             elif qty >= 10 and alert_status == "SENT":
                 inventory_tab.update_cell(row_num, 5, "")
-                print(f"🔄 Restock detected for {item_name}. Alert reset.")
+                logger.info(f"✅ Restock detected for {item_name}. Alert reset.")
 
+    except gspread.SpreadsheetNotFound:
+        logger.warning("📉 Database 'OpsAgent_DB_v1' not found yet.")
     except Exception as e:
-        print(f"⚠️ Logic Error in Munim Loop: {e}")
+        logger.error(f"⚠️ Logic Error in Munim Loop: {e}")
 
 if __name__ == "__main__":
-    print("🟢 Scheduler (Munim) Started. Press Ctrl+C to stop.")
+    logger.info("🟢 Munim (Scheduler) Started. Press Ctrl+C to stop.")
+
     while True:
         try:
             check_inventory_risks()
+        except KeyboardInterrupt:
+            logger.info("🛑 Munim stopping...")
+            break
         except Exception as e:
-            # THIS IS THE CRITICAL HACKATHON FIX
-            # If the internet dies or API fails, we catch it here, wait, and retry.
-            print(f"💥 CRITICAL CRASH PREVENTED: {e}")
-            print("🔄 Restarting loop in 60 seconds...")
+            logger.critical(f"💥 CRITICAL CRASH: {e}")
+            logger.info("🔄 Restarting loop in 60 seconds...")
 
-        # Wait 60 seconds before next check
+        # Check every 60 seconds
         time.sleep(60)

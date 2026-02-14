@@ -105,8 +105,8 @@
 
         /* The Auth Card */
         .auth-card {
-            background: rgba(255, 255, 255, 0.7);
-            backdrop-filter: blur(10px);
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(12px);
             border: 1px solid white;
             padding: 48px;
             border-radius: 32px;
@@ -114,6 +114,7 @@
             display: inline-block;
             width: 100%;
             max-width: 440px;
+            transition: transform 0.3s ease;
         }
 
         .btn-google {
@@ -146,8 +147,10 @@
 
         /* Success Message Styling */
         .success-container {
-            display: none; /* Controlled via JS or direct template rendering */
+            display: none; /* Controlled via JS */
             text-align: center;
+            border: 2px solid var(--primary);
+            background: white;
         }
 
         .icon-check {
@@ -161,6 +164,22 @@
             justify-content: center;
             font-size: 32px;
             margin: 0 auto 24px;
+            box-shadow: 0 8px 16px rgba(37, 211, 102, 0.3);
+        }
+
+        .step-box {
+            background: #f0fdf4;
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 24px;
+            text-align: left;
+            border: 1px solid #dcfce7;
+        }
+
+        .step-box strong {
+            display: block;
+            color: var(--primary-dark);
+            margin-bottom: 4px;
         }
 
         /* Features Grid */
@@ -195,7 +214,7 @@
 
 <nav>
     <a href="/" class="logo">⚡ Ops<span>Agent</span></a>
-    <div style="font-weight: 600; color: var(--dark);">Hackathon Edition v1.0</div>
+    <div style="font-weight: 600; color: var(--dark);">System v2.0</div>
 </nav>
 
 <main>
@@ -207,7 +226,7 @@
         <div class="auth-card" id="auth-ui">
             <div style="margin-bottom: 28px;">
                 <h3 style="margin-bottom: 8px; font-size: 20px;">Connect Dashboard</h3>
-                <p style="font-size: 14px; color: var(--text-muted);">Sync with your secure Google Sheet</p>
+                <p style="font-size: 14px; color: var(--text-muted);">Sync with your secure Google Sheet to start</p>
             </div>
 
             <a href="/login" class="btn-google">
@@ -216,35 +235,43 @@
             </a>
         </div>
 
-        <div class="auth-card success-container" id="success-ui" style="display: none;">
+        <div class="auth-card success-container" id="success-ui">
             <div class="icon-check">✓</div>
             <h3 style="margin-bottom: 12px; font-size: 24px;">Connection Active</h3>
-            <p style="font-size: 16px; color: var(--text-muted); margin-bottom: 24px;">
-                OpsAgent is now linked to your inventory. You can start messaging on WhatsApp.
-            </p>
-            <a href="https://web.whatsapp.com" target="_blank" class="badge" style="background: var(--primary); color: white; text-decoration: none;">
+
+            <div class="step-box">
+                <strong>👉 Next Step:</strong>
+                <span style="font-size: 14px; color: var(--text-main);">
+                    Open WhatsApp and send <b>"Sold 2 Maggi"</b> or upload a bill photo.
+                </span>
+            </div>
+
+            <a href="https://web.whatsapp.com" target="_blank" class="btn-google" style="background: var(--primary); color: white; border: none;">
                 Open WhatsApp Web
             </a>
         </div>
 
         <div class="features">
             <div class="feature-pill">🗣️ Hinglish Voice Notes</div>
-            <div class="feature-pill">🖼️ Bill Recognition</div>
-            <div class="feature-pill">📊 Real-time Dashboard</div>
-            <div class="feature-pill">🔔 Smart Reorder Alerts</div>
+            <div class="feature-pill">📸 Smart Image Scan</div>
+            <div class="feature-pill">📊 Live Dashboard</div>
+            <div class="feature-pill">🔔 Low Stock Alerts</div>
         </div>
     </div>
 </main>
 
 <footer>
-    &copy; 2026 Team Techitrons. Finalist PS02-ISTE Hackathon.
+    &copy; 2026 OpsAgent Team. All Systems Operational.
 </footer>
 
 <script>
-    // Simple logic to show success UI if the URL contains "callback"
-    if (window.location.pathname.includes('callback') || window.location.search.includes('code')) {
+    // Logic: If we are on the /callback route (returned by FastAPI after login), show success
+    if (window.location.pathname.includes('callback')) {
         document.getElementById('auth-ui').style.display = 'none';
-        document.getElementById('success-ui').style.display = 'block';
+        document.getElementById('success-ui').style.display = 'inline-block';
+
+        // Optional: Clean URL bar
+        window.history.replaceState({}, document.title, "/");
     }
 </script>
 

@@ -1,9 +1,31 @@
+# --- Core Framework ---
 fastapi
 uvicorn
 python-multipart
-google-generativeai
-gspread
-oauth2client
-twilio
+requests
 python-dotenv
+jinja2
+itsdangerous
+
+# --- AI & Logic ---
+google-generativeai
+thefuzz
+python-Levenshtein
+
+# --- Database & Auth ---
+gspread
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+
+# --- Messaging ---
+twilio
+
+# --- Dashboard (Streamlit) ---
+streamlit
+streamlit-autorefresh
+pandas
+plotly
+
+# --- Utils ---
 pyngrok
