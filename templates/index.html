@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpsAgent | The Invisible ERP</title>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #25D366;
+            --primary-dark: #128C7E;
+            --accent: #34b7f1;
+            --dark: #075E54;
+            --text-main: #111b21;
+            --text-muted: #667781;
+            --bg-gradient: linear-gradient(135deg, #f0f4f2 0%, #e6eee9 100%);
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+        }
+
+        body {
+            background: var(--bg-gradient);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Navbar */
+        nav {
+            padding: 24px 8%;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .logo {
+            font-size: 24px;
+            font-weight: 800;
+            color: var(--dark);
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .logo span {
+            color: var(--primary);
+        }
+
+        /* Main Hero Section */
+        main {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 40px 20px;
+        }
+
+        .hero-container {
+            max-width: 900px;
+            text-align: center;
+        }
+
+        .badge {
+            display: inline-block;
+            background: white;
+            padding: 8px 16px;
+            border-radius: 100px;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--primary-dark);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+            margin-bottom: 24px;
+        }
+
+        h1 {
+            font-size: clamp(32px, 5vw, 56px);
+            font-weight: 800;
+            line-height: 1.1;
+            margin-bottom: 24px;
+            letter-spacing: -1.5px;
+        }
+
+        h1 span {
+            background: linear-gradient(90deg, var(--primary), var(--primary-dark));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        p.subtitle {
+            font-size: 18px;
+            color: var(--text-muted);
+            margin-bottom: 40px;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+            line-height: 1.6;
+        }
+
+        /* The Auth Card */
+        .auth-card {
+            background: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(10px);
+            border: 1px solid white;
+            padding: 48px;
+            border-radius: 32px;
+            box-shadow: 0 24px 48px rgba(0,0,0,0.06);
+            display: inline-block;
+            width: 100%;
+            max-width: 440px;
+        }
+
+        .btn-google {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            background: white;
+            color: #1f1f1f;
+            padding: 18px 24px;
+            border-radius: 16px;
+            font-size: 16px;
+            font-weight: 600;
+            text-decoration: none;
+            border: 1px solid #dcdcdc;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+        }
+
+        .btn-google:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 24px rgba(0,0,0,0.1);
+            border-color: #c0c0c0;
+        }
+
+        .btn-google img {
+            width: 24px;
+            height: 24px;
+        }
+
+        /* Success Message Styling */
+        .success-container {
+            display: none; /* Controlled via JS or direct template rendering */
+            text-align: center;
+        }
+
+        .icon-check {
+            width: 64px;
+            height: 64px;
+            background: var(--primary);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 32px;
+            margin: 0 auto 24px;
+        }
+
+        /* Features Grid */
+        .features {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            margin-top: 64px;
+            flex-wrap: wrap;
+        }
+
+        .feature-pill {
+            background: white;
+            padding: 12px 20px;
+            border-radius: 16px;
+            font-size: 14px;
+            font-weight: 600;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.03);
+            border: 1px solid rgba(0,0,0,0.02);
+        }
+
+        footer {
+            padding: 32px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 14px;
+            font-weight: 500;
+        }
+    </style>
+</head>
+<body>
+
+<nav>
+    <a href="/" class="logo">⚡ Ops<span>Agent</span></a>
+    <div style="font-weight: 600; color: var(--dark);">Hackathon Edition v1.0</div>
+</nav>
+
+<main>
+    <div class="hero-container">
+        <div class="badge">🚀 Powered by Gemini 1.5 Flash</div>
+        <h1>The "Invisible ERP" for <br> <span>Modern Retail</span></h1>
+        <p class="subtitle">Turn your WhatsApp into a high-powered accountant. Speak, scan, and sync to Google Sheets instantly.</p>
+
+        <div class="auth-card" id="auth-ui">
+            <div style="margin-bottom: 28px;">
+                <h3 style="margin-bottom: 8px; font-size: 20px;">Connect Dashboard</h3>
+                <p style="font-size: 14px; color: var(--text-muted);">Sync with your secure Google Sheet</p>
+            </div>
+
+            <a href="/login" class="btn-google">
+                <img src="https://www.svgrepo.com/show/475656/google-color.svg" alt="Google Logo">
+                Authorize with Google
+            </a>
+        </div>
+
+        <div class="auth-card success-container" id="success-ui" style="display: none;">
+            <div class="icon-check">✓</div>
+            <h3 style="margin-bottom: 12px; font-size: 24px;">Connection Active</h3>
+            <p style="font-size: 16px; color: var(--text-muted); margin-bottom: 24px;">
+                OpsAgent is now linked to your inventory. You can start messaging on WhatsApp.
+            </p>
+            <a href="https://web.whatsapp.com" target="_blank" class="badge" style="background: var(--primary); color: white; text-decoration: none;">
+                Open WhatsApp Web
+            </a>
+        </div>
+
+        <div class="features">
+            <div class="feature-pill">🗣️ Hinglish Voice Notes</div>
+            <div class="feature-pill">🖼️ Bill Recognition</div>
+            <div class="feature-pill">📊 Real-time Dashboard</div>
+            <div class="feature-pill">🔔 Smart Reorder Alerts</div>
+        </div>
+    </div>
+</main>
+
+<footer>
+    &copy; 2026 Team Techitrons. Finalist PS02-ISTE Hackathon.
+</footer>
+
+<script>
+    // Simple logic to show success UI if the URL contains "callback"
+    if (window.location.pathname.includes('callback') || window.location.search.includes('code')) {
+        document.getElementById('auth-ui').style.display = 'none';
+        document.getElementById('success-ui').style.display = 'block';
+    }
+</script>
+
+</body>
+</html>

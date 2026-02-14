@@ -1,0 +1,30 @@
+# --- Secrets & API Keys (DO NOT REMOVE) ---
+.env
+token.json
+client_secret.json
+credentials.json
+
+# --- Python Environment ---
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+build/
+dist/
+
+# --- IDE Specific (PyCharm/VSCode) ---
+.idea/
+.vscode/
+*.swp
+*.bak
+
+# --- OS Specific ---
+.DS_Store
+Thumbs.db
+
+# --- Streamlit & Local Data ---
+.streamlit/config.toml
+*.log
