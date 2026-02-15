@@ -174,7 +174,13 @@ def get_data(email):
             sales_rows = sheet.worksheet("Sales").get_all_values()
             if len(sales_rows) > 1:
                 df_sales = pd.DataFrame(sales_rows[1:], columns=sales_rows[0])
+
+                # --- 🚨 FIX: Remove columns with empty headers ---
+                df_sales = df_sales.loc[:, df_sales.columns != '']
+                # -------------------------------------------------
+
                 if len(df_sales.columns) >= 3:
+                    # ... (keep the rest of your code here)
                     df_sales.rename(columns={
                         df_sales.columns[0]: 'Item Name',
                         df_sales.columns[1]: 'Quantity',
@@ -242,4 +248,4 @@ if df_sales is not None and not df_sales.empty:
     try:
         st.dataframe(df_sales.iloc[::-1].head(10), width="stretch")
     except:
-        st.dataframe(df_sales.iloc[::-1].head(10), use_container_width=True)
+        st.dataframe(df_sales.iloc[::-1].head(10), width="stretch")
