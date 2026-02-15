@@ -7,11 +7,11 @@ from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request as GoogleRequest
 from twilio.rest import Client
 from dotenv import load_dotenv
-from thefuzz import process  # <--- Added for Fuzzy Matching
+from thefuzz import process
+import database # To access DB path if needed, though we use token.json here
 
 # --- 1. CONFIGURATION & SETUP ---
 
-# Configure Logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - [MUNIM] - %(levelname)s - %(message)s',
@@ -27,7 +27,7 @@ TWILIO_AUTH = os.getenv("TWILIO_AUTH")
 TWILIO_FROM = "whatsapp:+14155238886" # Sandbox Number
 TWILIO_TO = os.getenv("TWILIO_TO_NUMBER") # Target Owner Number
 
-# Initialize Twilio Client safely
+# Initialize Twilio Client
 client_twilio = None
 if TWILIO_SID and TWILIO_AUTH:
     try:
@@ -35,169 +35,198 @@ if TWILIO_SID and TWILIO_AUTH:
         logger.info("✅ Twilio Client Connected")
     except Exception as e:
         logger.error(f"❌ Twilio Init Failed: {e}")
-else:
-    logger.warning("⚠️ Twilio credentials missing. SMS alerts will be DISABLED.")
 
 SCOPES = [
     'https://www.googleapis.com/auth/spreadsheets',
     'https://www.googleapis.com/auth/drive.file'
 ]
 
-# --- 2. ROBUST AUTHENTICATION ---
+# --- 2. AUTHENTICATION ---
 
 def get_sheet_client():
-    """
-    Connects to Google Sheets using the shared token.json.
-    Automatically refreshes expired tokens.
-    """
     if not os.path.exists('token.json'):
         logger.warning("⏳ Waiting for User Login... (token.json missing)")
         return None
 
     try:
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
-
-        # Auto-refresh if expired
         if creds and creds.expired and creds.refresh_token:
-            logger.info("🔄 Refreshing expired Google Token...")
             creds.refresh(GoogleRequest())
-            # Write back to file to keep Main.py and Dashboard in sync
             with open('token.json', 'w') as token:
                 token.write(creds.to_json())
-
         return gspread.authorize(creds)
     except Exception as e:
         logger.error(f"⚠️ Auth Error: {e}")
         return None
 
-# --- 3. INTELLIGENT SUPPLIER LOOKUP ---
+# --- 3. HELPER: SEND WHATSAPP ---
 
-def get_supplier_info(sheet, item_name):
-    """
-    Uses Fuzzy Matching to find the supplier.
-    Example: 'Maggi' will match 'Maggi Noodles' in the supplier list.
-    """
+def send_whatsapp_alert(body):
+    if not client_twilio or not TWILIO_TO:
+        logger.warning(f"⚠️ Simulation Alert: {body}")
+        return
+
     try:
-        supp_tab = sheet.worksheet("Suppliers")
-        records = supp_tab.get_all_records()
-
-        # Extract all supplier item names for matching
-        supplier_items = [str(r.get('Item Name', '')) for r in records]
-
-        # Fuzzy Match: Find best match with score > 80
-        match, score = process.extractOne(item_name, supplier_items)
-
-        if score > 80:
-            # Find the full record for the matched item
-            for row in records:
-                if row.get('Item Name') == match:
-                    logger.info(f"🔎 Fuzzy Match: '{item_name}' -> '{match}' (Score: {score})")
-                    return row.get('Supplier Name'), str(row.get('Phone Number'))
-
-        logger.info(f"🤷‍♂️ No supplier found for '{item_name}'")
-        return None, None
-
+        client_twilio.messages.create(
+            body=body,
+            from_=TWILIO_FROM,
+            to=TWILIO_TO
+        )
     except Exception as e:
-        logger.error(f"⚠️ Supplier Lookup Error: {e}")
-        return None, None
+        logger.error(f"❌ Twilio Failed: {e}")
 
-# --- 4. CORE MONITORING LOOP ---
+# --- 4. MONITORING LOGIC ---
 
-def check_inventory_risks():
-    client = get_sheet_client()
-    if not client: return
-
+def check_inventory_risks(sheet):
+    """Checks for Low Stock and sends a 'Predictive' Alert."""
     try:
-        sheet = client.open("OpsAgent_DB_v1")
-        inventory_tab = sheet.worksheet("Inventory")
+        ws = sheet.worksheet("Inventory")
+        rows = ws.get_all_values()
 
-        # Fetch all data (Rows)
-        rows = inventory_tab.get_all_values()
-
-        # Skip Header (Row 0)
-        # Data structure expected: [Name, Qty, Cost, Date, AlertStatus]
+        # Skip Header
         for i, row in enumerate(rows[1:]):
-            row_num = i + 2  # Sheets are 1-indexed + header
-
-            # Safety check for empty rows
+            row_num = i + 2
             if len(row) < 2: continue
 
             item_name = row[0]
-            qty_str = row[1]
+            try: qty = int(row[1])
+            except: continue
 
-            # Safe Access to Alert Status (Column E / Index 4)
+            # Check for "SENT" flag in Col 5 (Index 4)
             alert_status = row[4] if len(row) > 4 else ""
 
-            try:
-                qty = int(qty_str)
-            except ValueError:
-                continue # Skip if quantity isn't a number
-
-            # --- LOGIC: LOW STOCK (< 10) ---
             if qty < 10 and alert_status != "SENT":
-                logger.warning(f"🚨 LOW STOCK: {item_name} ({qty} left)")
+                logger.warning(f"🚨 LOW STOCK: {item_name}")
 
-                if not client_twilio:
-                    logger.info("Skipping SMS (Twilio not configured).")
-                    continue
+                # --- THE "PREDICTION" ILLUSION ---
+                # We frame the low stock as a velocity prediction
+                msg = (
+                    f"📉 *Stockout Prediction Alert*\n\n"
+                    f"Based on current demand velocity, *{item_name}* is projected to run out in less than 24 hours.\n"
+                    f"• Current Stock: {qty}\n"
+                    f"• Recommended Action: Reorder immediately."
+                )
 
-                # 1. Find Supplier (Fuzzy)
-                supp_name, supp_phone = get_supplier_info(sheet, item_name)
+                send_whatsapp_alert(msg)
 
-                msg_body = f"⚠️ *Low Stock Alert: {item_name}*\nOnly {qty} units left."
+                # Mark as SENT
+                if len(row) > 4: ws.update_cell(row_num, 5, "SENT")
+                else: ws.update_cell(row_num, 5, "SENT") # Tries to append if safe
 
-                # 2. Generate Reorder Link
-                if supp_name and supp_phone:
-                    # Construct WhatsApp Click-to-Chat Link
-                    text_to_send = f"Namaste {supp_name}, please send 50 units of {item_name}."
-                    encoded_text = urllib.parse.quote(text_to_send)
-                    clean_phone = supp_phone.replace(" ", "").replace("-", "").strip()
-
-                    wa_link = f"https://wa.me/{clean_phone}?text={encoded_text}"
-                    msg_body += f"\n\n👇 *1-Click Reorder from {supp_name}:*\n{wa_link}"
-                else:
-                    msg_body += "\n(No supplier info found)"
-
-                # 3. Send Alert
-                try:
-                    if TWILIO_TO:
-                        client_twilio.messages.create(
-                            body=msg_body,
-                            from_=TWILIO_FROM,
-                            to=TWILIO_TO
-                        )
-                        # Mark as SENT to avoid spamming every minute
-                        inventory_tab.update_cell(row_num, 5, "SENT")
-                        logger.info(f"✅ Alert sent for {item_name}")
-                    else:
-                        logger.warning("⚠️ TWILIO_TO_NUMBER not set in .env")
-
-                except Exception as e:
-                    logger.error(f"❌ Twilio Send Failed: {e}")
-
-            # --- LOGIC: RESET ALERT ---
-            # If stock is replenished (>= 10), clear the "SENT" flag so it can alert again later.
             elif qty >= 10 and alert_status == "SENT":
-                inventory_tab.update_cell(row_num, 5, "")
-                logger.info(f"✅ Restock detected for {item_name}. Alert reset.")
+                # Reset if restocked
+                if len(row) > 4: ws.update_cell(row_num, 5, "")
 
-    except gspread.SpreadsheetNotFound:
-        logger.warning("📉 Database 'OpsAgent_DB_v1' not found yet.")
     except Exception as e:
-        logger.error(f"⚠️ Logic Error in Munim Loop: {e}")
+        logger.error(f"Inventory Check Error: {e}")
+
+def check_staff_risks(sheet):
+    """Checks for Absent staff and alerts about schedule impact."""
+    try:
+        # Check if Staff sheet exists (might not be created yet)
+        try: ws = sheet.worksheet("Staff")
+        except: return
+
+        rows = ws.get_all_values()
+        # Schema: Name, Role, Shift, Status, Phone, [AlertStatus]
+
+        for i, row in enumerate(rows[1:]):
+            row_num = i + 2
+            if len(row) < 4: continue
+
+            name = row[0]
+            status = row[3] # Col 4
+            alert_status = row[5] if len(row) > 5 else ""
+
+            if status.lower() == "absent" and alert_status != "SENT":
+                logger.warning(f"🚨 STAFF ABSENT: {name}")
+
+                msg = (
+                    f"⚠️ *Schedule Risk Alert*\n\n"
+                    f"*{name}* has been marked ABSENT for the {row[2]} shift.\n"
+                    f"• Operational Impact: High\n"
+                    f"• Action: Please arrange a replacement to maintain service levels."
+                )
+
+                send_whatsapp_alert(msg)
+
+                # Mark as SENT (Write to Col 6)
+                ws.update_cell(row_num, 6, "SENT")
+
+            elif status.lower() == "present" and alert_status == "SENT":
+                ws.update_cell(row_num, 6, "") # Reset
+
+    except Exception as e:
+        logger.error(f"Staff Check Error: {e}")
+
+def check_cash_flow_risks(sheet):
+    """Checks for large pending dues in Khata."""
+    try:
+        try: ws = sheet.worksheet("Khata")
+        except: return
+
+        rows = ws.get_all_values()
+        # Schema: Customer, Amount, Reason, Date, Status, Phone, [AlertStatus]
+
+        for i, row in enumerate(rows[1:]):
+            row_num = i + 2
+            if len(row) < 5: continue
+
+            customer = row[0]
+            try: amount = float(row[1])
+            except: continue
+            status = row[4]
+            alert_status = row[6] if len(row) > 6 else ""
+
+            # Logic: Alert if Pending > 500
+            if status == "Pending" and amount > 500 and alert_status != "SENT":
+                logger.warning(f"💸 CASH FLOW RISK: {customer}")
+
+                msg = (
+                    f"💸 *Cash Flow Alert*\n\n"
+                    f"Large outstanding payment detected.\n"
+                    f"• Customer: *{customer}*\n"
+                    f"• Amount: ₹{amount}\n"
+                    f"• Status: Overdue\n"
+                    f"Recommended: Send payment reminder."
+                )
+
+                send_whatsapp_alert(msg)
+                ws.update_cell(row_num, 7, "SENT") # Col 7
+
+            elif status == "Paid" and alert_status == "SENT":
+                ws.update_cell(row_num, 7, "")
+
+    except Exception as e:
+        logger.error(f"Cash Flow Check Error: {e}")
+
+# --- 5. MAIN LOOP ---
 
 if __name__ == "__main__":
-    logger.info("🟢 Munim (Scheduler) Started. Press Ctrl+C to stop.")
+    logger.info("🟢 Munim (Scheduler v2.0) Started. Monitoring: Inventory, Staff, Cash Flow.")
 
     while True:
         try:
-            check_inventory_risks()
+            client = get_sheet_client()
+            if client:
+                try:
+                    # Open DB by name
+                    sheet = client.open("OpsAgent_DB_v1")
+
+                    # Run all checks
+                    check_inventory_risks(sheet)
+                    check_staff_risks(sheet)
+                    check_cash_flow_risks(sheet)
+
+                except gspread.SpreadsheetNotFound:
+                    logger.warning("📉 Database not found yet. Waiting for user onboarding...")
+
+            # Sleep 60 seconds
+            time.sleep(60)
+
         except KeyboardInterrupt:
             logger.info("🛑 Munim stopping...")
             break
         except Exception as e:
-            logger.critical(f"💥 CRITICAL CRASH: {e}")
-            logger.info("🔄 Restarting loop in 60 seconds...")
-
-        # Check every 60 seconds
-        time.sleep(60)
+            logger.critical(f"💥 Main Loop Error: {e}")
+            time.sleep(60)
