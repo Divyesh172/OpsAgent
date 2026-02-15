@@ -4,7 +4,6 @@ import logging
 import warnings
 import requests
 import gspread
-import re
 from fastapi import FastAPI, Request, Form
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -17,6 +16,8 @@ from dotenv import load_dotenv
 import secrets
 import database
 from datetime import datetime
+from PIL import Image
+from io import BytesIO
 
 # --- CONFIGURATION ---
 warnings.filterwarnings("ignore")
@@ -26,7 +27,7 @@ logger = logging.getLogger("OpsAgent")
 load_dotenv()
 os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
 
-# Initialize DB (Ensures tables and staff/khata logic are ready)
+# Initialize DB
 database.init_db()
 
 try:
@@ -42,18 +43,63 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
 
 # --- AI SETUP ---
 model = None
-try:
+ACTIVE_MODEL_NAME = ""
+
+def setup_ai():
+    global model, ACTIVE_MODEL_NAME
     import google.generativeai as genai
     genai.configure(api_key=GOOGLE_API_KEY)
-    # Using the flash model for low-latency hackathon responses
-    model = genai.GenerativeModel('models/gemini-2.5-flash')
-    logger.info("✅ Gemini AI Ready")
-except:
-    logger.error("❌ AI Init Failed")
+
+    # THE KITCHEN SINK LIST: Tests every possible valid model name
+    candidates = [
+        "models/gemini-1.5-flash",
+        "models/gemini-1.5-flash-001",     # Specific version
+        "models/gemini-1.5-flash-latest",
+        "models/gemini-1.5-flash-8b",      # High speed version
+        "models/gemini-1.5-pro",
+        "models/gemini-1.5-pro-001",       # Specific version
+        "models/gemini-1.0-pro",           # Stable previous gen
+        "models/gemini-pro",               # Legacy alias
+        "models/gemini-pro-vision"         # Legacy vision
+    ]
+
+    print("\n🤖 OpsAgent AI Auto-Discovery...")
+    for m_name in candidates:
+        try:
+            print(f"   👉 Testing: {m_name}...", end=" ")
+            test_model = genai.GenerativeModel(m_name)
+            test_model.generate_content("Hi")
+
+            model = test_model
+            ACTIVE_MODEL_NAME = m_name
+            print("✅ SUCCESS!")
+            logger.info(f"✅ AI System Online using: {m_name}")
+            return
+        except Exception as e:
+            print("❌") # Keep console clean
+            pass
+
+    # IF ALL FAIL: Print what IS available to help debug
+    print("\n❌ ALL MODELS FAILED. Listing available models for your Key:")
+    try:
+        for m in genai.list_models():
+            if 'generateContent' in m.supported_generation_methods:
+                print(f"   - {m.name}")
+    except:
+        print("   (Could not list models. Check API Key.)")
+    logger.critical("❌ AI Init Failed. See console for details.")
+
+# Run setup
+setup_ai()
 
 # --- AUTH UTILS ---
 CLIENT_SECRETS_FILE = "client_secret.json"
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/userinfo.email']
+SCOPES = [
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/drive.file',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'openid'
+]
 
 def get_user_client(creds_json):
     try:
@@ -69,17 +115,10 @@ def get_user_client(creds_json):
 # --- HELPER FUNCTIONS ---
 
 def clean_json_string(s):
-    """
-    Strips markdown formatting from AI output.
-    Ensures the string can be parsed by json.loads().
-    """
     s = s.strip()
-    if s.startswith("```json"):
-        s = s[7:]
-    elif s.startswith("```"):
-        s = s[3:]
-    if s.endswith("```"):
-        s = s[:-3]
+    if s.startswith("```json"): s = s[7:]
+    elif s.startswith("```"): s = s[3:]
+    if s.endswith("```"): s = s[:-3]
     return s.strip()
 
 def update_inventory_stock(sheet, item_name, qty_change, cost=0):
@@ -112,14 +151,13 @@ def update_inventory_stock(sheet, item_name, qty_change, cost=0):
     return resolved_name
 
 def update_staff_status(sheet, staff_name, status):
-    """Updates the Staff sheet for PS02 tracking requirements."""
     try:
         ws = sheet.worksheet("Staff")
         rows = ws.get_all_values()
         for i, row in enumerate(rows[1:]):
             if len(row) > 0 and staff_name.lower() in str(row[0]).lower():
                 row_idx = i + 2
-                ws.update_cell(row_idx, 4, status) # Column 4 is Status
+                ws.update_cell(row_idx, 4, status)
                 return f"✅ Marked {row[0]} as {status}"
         return f"⚠️ Staff member '{staff_name}' not found."
     except Exception as e:
@@ -154,16 +192,21 @@ async def callback(request: Request):
         flow.fetch_token(authorization_response=str(request.url))
         session = flow.authorized_session()
 
-        # --- FIXED LINE HERE ---
         user_info = session.get('https://www.googleapis.com/userinfo/v2/me').json()
-
         email = user_info['email']
-        database.save_user(email, flow.credentials.to_json())
+
+        creds_json = flow.credentials.to_json()
+        database.save_user(email, creds_json)
+
+        with open("token.json", "w") as token_file:
+            token_file.write(creds_json)
+        logger.info("✅ Saved token.json for Scheduler")
+
         request.session['user_email'] = email
 
         try:
             client = gspread.authorize(flow.credentials)
-            database.initialize_user_sheet(client, email) # Centralized init
+            database.initialize_user_sheet(client, email)
         except Exception as e:
             logger.error(f"Sheet Init Error: {e}")
 
@@ -196,14 +239,17 @@ async def save_phone(request: Request):
         if not clean_phone.startswith("+"):
             clean_phone = "+91" + clean_phone if len(clean_phone) == 10 else "+" + clean_phone
         database.link_phone(email, clean_phone)
-        return RedirectResponse(f"http://localhost:8501/?email={email}")
-    return RedirectResponse("/")
+        return RedirectResponse(f"http://localhost:8501/?email={email}", status_code=303)
+    return RedirectResponse("/", status_code=303)
 
 @app.post("/whatsapp")
 async def reply_whatsapp(request: Request):
     form = await request.form()
     sender = form.get("From", "").replace("whatsapp:", "")
     body = form.get("Body", "")
+
+    num_media = int(form.get("NumMedia", 0))
+    media_url = form.get("MediaUrl0")
 
     user = database.get_user_by_phone(sender)
     if not user: return str(MessagingResponse().message("❌ Number not registered. Please Login."))
@@ -212,47 +258,58 @@ async def reply_whatsapp(request: Request):
     if not client: return str(MessagingResponse().message("⚠️ Session Expired. Log in again."))
 
     try:
-        # Prompt designed to capture unstructured Hinglish and return specific structured fields
-        prompt = f"""
-        Analyze this business message: "{body}"
-        Return STRICT JSON (no markdown or code blocks): 
+        prompt_text = f"""
+        Analyze this business message (or image).
+        Return STRICT JSON (no markdown): 
         {{
           "action": "SALE" | "RESTOCK" | "EXPENSE" | "STAFF", 
-          "item": "Name of product", 
-          "qty": Integer, 
-          "price": Float, 
-          "party": "Customer/Party Name", 
-          "mode": "CASH" | "UPI" | "UDHAR", 
-          "staff_name": "Employee Name", 
-          "staff_status": "Present" | "Absent",
-          "reply": "Friendly confirmation message"
+          "item": "Name", "qty": Integer, "price": Float, 
+          "party": "Name", "mode": "CASH" | "UPI" | "UDHAR", 
+          "staff_name": "Name", "staff_status": "Present" | "Absent",
+          "reply": "Friendly confirmation"
         }}
         Context:
+        - Message Text: "{body}"
         - "becha udhar pe" -> action: SALE, mode: UDHAR
-        - "absent hai" -> action: STAFF, staff_status: Absent
-        - "paid" -> action: EXPENSE
+        - Bill Image -> Extract total items and sum.
         """
 
-        response = model.generate_content(prompt)
+        content_inputs = [prompt_text]
 
-        # Clean AI markdown if present and parse
+        # --- FIX 2: Authenticated Image Download ---
+        if num_media > 0 and media_url:
+            logger.info(f"📸 Downloading image: {media_url}")
+            # Twilio requires Auth to download media
+            auth = (os.getenv("TWILIO_SID"), os.getenv("TWILIO_AUTH"))
+            img_response = requests.get(media_url, auth=auth)
+
+            if img_response.status_code == 200:
+                image_data = Image.open(BytesIO(img_response.content))
+                content_inputs.append(image_data)
+            else:
+                logger.error(f"❌ Failed to download image: {img_response.status_code}")
+                return str(MessagingResponse().message("❌ Error downloading image."))
+        # -------------------------------------------
+
+        response = model.generate_content(content_inputs)
         cleaned_text = clean_json_string(response.text)
         data = json.loads(cleaned_text)
+
+        qty = int(data.get('qty') or 1)
+        price = float(data.get('price') or 0.0)
+        item = data.get('item') or "Unknown Item"
 
         sheet = client.open_by_key(user['sheet_id']) if user['sheet_id'] else client.open("OpsAgent_DB_v1")
         action = data.get('action')
 
         if action == "SALE":
-            final_name = update_inventory_stock(sheet, data.get('item', 'Item'), -int(data.get('qty', 1)))
+            final_name = update_inventory_stock(sheet, item, -qty)
             sheet.worksheet("Sales").append_row([
-                final_name, data.get('qty'), data.get('price'),
-                str(datetime.now().date()), data.get('mode'), data.get('party', 'Walk-in')
+                final_name, qty, price, str(datetime.now().date()), data.get('mode'), data.get('party', 'Walk-in')
             ])
-            # For PS02 tracking of credit payments
             if data.get('mode') == "UDHAR":
                 sheet.worksheet("Khata").append_row([
-                    data.get('party', 'Guest'), data.get('price'), data.get('item'),
-                    str(datetime.now().date()), "Pending", ""
+                    data.get('party', 'Guest'), price, item, str(datetime.now().date()), "Pending", ""
                 ])
 
         elif action == "STAFF":
@@ -260,16 +317,15 @@ async def reply_whatsapp(request: Request):
             return str(MessagingResponse().message(msg))
 
         elif action == "RESTOCK":
-            final_name = update_inventory_stock(sheet, data.get('item', 'Item'), int(data.get('qty', 1)), data.get('price'))
-            sheet.worksheet("Ledger").append_row([f"Restock: {final_name}", data.get('price'), str(datetime.now().date()), "Inventory"])
+            final_name = update_inventory_stock(sheet, item, qty, price)
+            sheet.worksheet("Ledger").append_row([f"Restock: {final_name}", price, str(datetime.now().date()), "Inventory"])
 
         return str(MessagingResponse().message(data.get('reply', 'Processed!')))
 
     except Exception as e:
         logger.error(f"Processing Error: {e}")
-        return str(MessagingResponse().message("Sorry, I couldn't process that. Try: 'Sold 5 Maggi' or 'Raju is absent'"))
+        return str(MessagingResponse().message(f"❌ Error: {str(e)}"))
 
 if __name__ == "__main__":
     import uvicorn
-    # Use standard port 8000 for local dev and Ngrok tunneling
     uvicorn.run(app, host="0.0.0.0", port=8000)

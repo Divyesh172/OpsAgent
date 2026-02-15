@@ -30,7 +30,12 @@ st.markdown("""
 
 st_autorefresh(interval=10000, key="datarefresh")
 
-SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/userinfo.email']
+SCOPES = [
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/drive.file',
+    'https://www.googleapis.com/auth/userinfo.email',
+    'openid' # <--- ADDED: Prevents "Scope has changed" errors
+]
 
 # --- HELPER: SAFE DATAFRAME CREATION ---
 def safe_create_df(worksheet):
@@ -94,6 +99,19 @@ if "authenticated" not in st.session_state: st.session_state.authenticated = Fal
 if "user_email" not in st.session_state: st.session_state.user_email = None
 if "setup_mode" not in st.session_state: st.session_state.setup_mode = False
 
+# --- NEW: AUTO-LOGIN FROM URL ---
+# This detects the "?email=..." from the backend redirect
+if "email" in st.query_params and not st.session_state.authenticated:
+    email_from_url = st.query_params["email"]
+    # Verify user exists in DB
+    user = database.get_user_by_email(email_from_url)
+    if user:
+        st.session_state.authenticated = True
+        st.session_state.user_email = email_from_url
+        st.session_state.setup_mode = False
+        st.toast(f"✅ Welcome back, {email_from_url}!", icon="🚀")
+        st.rerun()
+
 if not st.session_state.authenticated:
     c1, c2, c3 = st.columns([1, 1, 1])
     with c2:
@@ -101,7 +119,7 @@ if not st.session_state.authenticated:
         email_input = st.text_input("Email Address")
         pass_input = st.text_input("Password", type="password")
 
-        if st.button("Access Dashboard", type="primary", use_container_width=True):
+        if st.button("Access Dashboard", type="primary", width='stretch'):
             if email_input and pass_input:
                 success, msg = authenticate(email_input, pass_input)
                 if success:
